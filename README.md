@@ -6,24 +6,30 @@ A small package to create visualizations of PyTorch operation execution.
 ## Install
 
 Install PyTorch with CUDA support like:
+
 ```
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ```
+
 Note torch>=2.1.0.
 
 Install torchopviz:
+
 ```
 pip3 install torchopviz
 ```
 
 ## Usage
+
 Offline mode:
+
 ```
 from torchopviz import offline_viz
 offline_viz(file="./complex_graph.json")
 ```
 
 Online mode:
+
 ```
 from torchopviz import online_viz
 from torch import nn
@@ -38,7 +44,10 @@ online_viz(model, data, save_dir="./sample_data")
 ![example](example.png)
 
 ## TODO
+
 Display distributed computation
+
 Combine memory usage info
 
 Optmization
+
