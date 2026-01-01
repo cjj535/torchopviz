@@ -206,7 +206,6 @@ def graph_to_json(
                     "start_time": timeMap.GetStartTime(key),
                     "end_time": timeMap.GetEndTime(key),
                     "category": _CATEGORY_TO_STRING[c] if (c := category.get(key, version)) is not None else "unknown"
-                    # 还需要补充哪些信息，如生命周期
                 }
 
         node_dict['in_edges'] = [res for k, (_, v) in node.inputs.items()
@@ -415,6 +414,7 @@ def set_id(op_tree: OpTree):
 _original_init = MemoryProfile.__init__
 
 dir: str = ""
+is_save_backward: bool = False
 
 # 定义新的 __init__
 def my_init(self, *args, **kwargs):
@@ -436,7 +436,7 @@ def my_init(self, *args, **kwargs):
     # 3、校验必为有向无环图
 
     # 构建数据流图，并建立子图包含关系
-    complex_graph = build_complex_graph(graph_json, tree_json)
+    complex_graph = build_complex_graph(graph_json, tree_json, is_save_backward)
 
     # 最后导出为json文件
     file = os.path.join(dir, complex_graph_file)
@@ -446,9 +446,12 @@ def my_init(self, *args, **kwargs):
         logger.info(f"Generated {file}")
 
 
-def memory_profile_monkey_patch(save_dir: str):
+def memory_profile_monkey_patch(save_dir: str, save_backward: bool = False):
     global dir
     dir = save_dir
+
+    global is_save_backward
+    is_save_backward = save_backward
 
     # 替换 __init__
     MemoryProfile.__init__ = my_init

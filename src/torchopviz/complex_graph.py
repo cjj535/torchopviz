@@ -131,7 +131,7 @@ def delete_backward_node(tree_dict: Dict[int, Dict], leaf_node_dict: Dict[int, D
         if key in leaf_node_dict:
             del leaf_node_dict[key]
 
-def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[Dict]:
+def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict], is_save_backward: bool = False) -> List[Dict]:
     # 1.每条json数据以id为key
     leaf_node_map: Dict[int, Dict] = {n["id"]: n for n in graph_data}
     node_map: Dict[int, Dict] = {n["id"]: n for n in tree_data}
@@ -143,7 +143,8 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
     delete_postprocess_node(node_map, leaf_node_map)
 
     # 删除图中的backward节点
-    delete_backward_node(node_map, leaf_node_map)
+    if not is_save_backward:
+        delete_backward_node(node_map, leaf_node_map)
 
     # 对森林设置一个总的虚拟的根节点，id为-1，方便后续算法计算
     virtual_root_id = -1
@@ -192,7 +193,9 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
         return count
 
     # dfs遍历函数，每次调用分析一个子图中应有的节点，包括tensor节点、op节点、子图
+    min_time = float("inf")
     def dfs(root_id: int, children: List[int], depth: int) -> None:
+        nonlocal min_time
         for node_id in children:
             if is_leaf(node_map[node_id]):
                 # 添加op
@@ -201,14 +204,16 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
                     "id": id,
                     "start_time": node_map[node_id]["start_time"],
                     "end_time": node_map[node_id]["end_time"],
-                    "isTensor": False,
-                    "isLeaf": True,
+                    "is_tensor": False,
+                    "is_leaf": True,
                     "label": f'{node_map[node_id]["name"]}',
                     "parent": node_map[root_id]["new_id"] if root_id != virtual_root_id else None,
                     "children": [],
-                    "nextNodes": [],
+                    "next_nodes": [],
                 }
                 node_map[node_id]["new_id"] = id
+                min_time = min(min_time, node_map[node_id]["start_time"]) if node_map[node_id]["start_time"] != -1 else min_time
+                min_time = min(min_time, node_map[node_id]["end_time"]) if node_map[node_id]["end_time"] != -1 else min_time
             else:
                 # 添加子图
                 id = StepCount()
@@ -216,14 +221,16 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
                     "id": id,
                     "start_time": node_map[node_id]["start_time"],
                     "end_time": node_map[node_id]["end_time"],
-                    "isTensor": False,
-                    "isLeaf": False,
+                    "is_tensor": False,
+                    "is_leaf": False,
                     "label": f'{node_map[node_id]["name"]}',
                     "parent": node_map[root_id]["new_id"] if root_id != virtual_root_id else None,
                     "children": [],
-                    "nextNodes": [],
+                    "next_nodes": [],
                 }
                 node_map[node_id]["new_id"] = id
+                min_time = min(min_time, node_map[node_id]["start_time"]) if node_map[node_id]["start_time"] != -1 else min_time
+                min_time = min(min_time, node_map[node_id]["end_time"]) if node_map[node_id]["end_time"] != -1 else min_time
 
                 dfs(node_id, node_map[node_id]["children"], depth+1)
 
@@ -235,15 +242,17 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
                 "id": id,
                 "start_time": tensor_map[tensor_key].start_time,
                 "end_time": tensor_map[tensor_key].end_time,
-                "isTensor": True,
-                "isLeaf": True,
+                "is_tensor": True,
+                "is_leaf": True,
                 "label": f'{tensor_map[tensor_key].label}',
                 "parent": node_map[root_id]["new_id"] if root_id != virtual_root_id else None,
                 "children": [],
-                "nextNodes": [],
+                "next_nodes": [],
                 "info": tensor_map[tensor_key].info,
             }
             tensor_map[tensor_key].id = id
+            min_time = min(min_time, tensor_map[tensor_key].start_time) if tensor_map[tensor_key].start_time != -1 else min_time
+            min_time = min(min_time, tensor_map[tensor_key].end_time) if  tensor_map[tensor_key].end_time != -1 else min_time
 
     root_nodes = [k for k, v in node_map.items() if v["parent"] is None]
     dfs(virtual_root_id, root_nodes, depth=1)
@@ -252,16 +261,24 @@ def build_complex_graph(graph_data: List[Dict], tree_data: List[Dict]) -> List[D
     for id, node in graph_nodes_map.items():
         if node["parent"]:
             graph_nodes_map[node["parent"]]["children"].append(id)
+    
+    # 使用相对时间(us)
+    print(min_time)
+    for id, node in graph_nodes_map.items():
+        if node["start_time"] != -1:
+            graph_nodes_map[id]["start_time"] = int((graph_nodes_map[id]["start_time"] - min_time)/1e3)
+        if node["end_time"] != -1:
+            graph_nodes_map[id]["end_time"] = int((graph_nodes_map[id]["end_time"] - min_time)/1e3)
 
     # 5.添加边
     for subgraph_id, tensor_key_list in tensors_in_subgraph.items():
         for tensor_key in tensor_key_list:
             producer_id = tensor_map[tensor_key].producer
             if producer_id != virtual_root_id:
-                graph_nodes_map[node_map[producer_id]["new_id"]]["nextNodes"].append(tensor_map[tensor_key].id)
+                graph_nodes_map[node_map[producer_id]["new_id"]]["next_nodes"].append(tensor_map[tensor_key].id)
                 
             for comsumer_id in tensor_map[tensor_key].comsumers:
-                graph_nodes_map[tensor_map[tensor_key].id]["nextNodes"].append(node_map[comsumer_id]["new_id"])
+                graph_nodes_map[tensor_map[tensor_key].id]["next_nodes"].append(node_map[comsumer_id]["new_id"])
 
     nodes_list = [node for _, node in graph_nodes_map.items()]
     return nodes_list

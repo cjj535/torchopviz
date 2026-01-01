@@ -3,7 +3,6 @@ let maxTime = -1;
 let minTime = -1;
 let relativeMaxTime = -1;
 let relativeMinTime = -1;
-let nsToS = 10000000;
 
 // *******************************************************************************************
 // node
@@ -14,14 +13,14 @@ class Node {
     this.id = node_json.id;
     this.start_time = node_json.start_time;
     this.end_time = node_json.end_time
-    this.isTensor = !!node_json.isTensor;
-    this.isLeaf = !!node_json.isLeaf;
+    this.is_tensor = !!node_json.is_tensor;
+    this.is_leaf = !!node_json.is_leaf;
     this.label = node_json.label ?? String(node_json.id);
     this.parent = node_json.parent ?? null;
     this.children = Array.isArray(node_json.children) ? [...node_json.children] : [];
-    this.nextNodes = Array.isArray(node_json.nextNodes) ? [...node_json.nextNodes] : [];
+    this.next_nodes = Array.isArray(node_json.next_nodes) ? [...node_json.next_nodes] : [];
     this.isCollapse = true;
-    if (this.isTensor && node_json?.info) {
+    if (this.is_tensor && node_json?.info) {
       const device = node_json.info.device ?? 'unknown';
       const dtype = node_json.info.dtype ?? 'unknown';
       const size = node_json.info.size ?? 'unknown';
@@ -55,26 +54,26 @@ class Graph {
 
     // 第一遍遍历：检查各种规则并计算入度
     for (const [u, node] of this.nodes) {
-      // 规则1: 非叶子节点不应该有 nextNodes
-      if (!node.isLeaf && node.nextNodes.length > 0) {
+      // 规则1: 非叶子节点不应该有 next_nodes
+      if (!node.is_leaf && node.next_nodes.length > 0) {
         console.log("subgraph should not have next nodes.");
         return false;
       }
 
       // 规则2: 叶子节点不应该有 children
-      if (node.isLeaf && node.children.length > 0) {
+      if (node.is_leaf && node.children.length > 0) {
         console.log("leaf node should not have children.");
         return false;
       }
 
       // 规则3: 非叶子节点应该有 children
-      if (!node.isLeaf && node.children.length === 0) {
+      if (!node.is_leaf && node.children.length === 0) {
         console.log("non leaf node should have children.");
         return false;
       }
 
       // 计算入度并检查规则4
-      for (const v of node.nextNodes) {
+      for (const v of node.next_nodes) {
         const nextNode = this.nodes.get(v);
         if (!nextNode) {
           console.log(`Next node ${v} not found in graph.`);
@@ -82,7 +81,7 @@ class Graph {
         }
 
         // 规则4: op节点的输出应该是tensor，tensor应该是op节点的输入
-        if (node.isTensor === nextNode.isTensor) {
+        if (node.is_tensor === nextNode.is_tensor) {
           console.log("op node's output should be tensor, tensor should be input of op node.");
           return false;
         }
@@ -95,7 +94,7 @@ class Graph {
     // 检查规则5: tensor节点入度不能超过1
     for (const [nodeId, degree] of inDegree) {
       const node = this.nodes.get(nodeId);
-      if (node.isTensor && degree > 1) {
+      if (node.is_tensor && degree > 1) {
         console.log("tensor only has one producer.");
         return false;
       }
@@ -114,7 +113,7 @@ class Graph {
       const u = queue.shift();
       count++;
       const currentNode = this.nodes.get(u);
-      for (const v of currentNode.nextNodes) {
+      for (const v of currentNode.next_nodes) {
         const currentDegree = inDegree.get(v) - 1;
         inDegree.set(v, currentDegree);
         if (currentDegree === 0) {
@@ -145,27 +144,23 @@ class Graph {
       }
     }
     if (minTime !== -1 && maxTime !== -1) {
-      minTime = minTime - 10000000;
-      maxTime = maxTime + 10000000;
+      minTime = minTime - 1;
+      maxTime = maxTime + 1;
     } else {
       minTime = 0;
-      maxTime = 10000000;
+      maxTime = 1;
     }
     relativeMinTime = 0;
-    // relativeMaxTime = ((maxTime - minTime) / nsToS).toFixed(3);
     relativeMaxTime = maxTime - minTime;
     for (const node of this.nodes.values()) {
       if (node.start_time !== -1) {
-        // node.relative_start_time = ((node.start_time - minTime) / nsToS).toFixed(3);
         node.relative_start_time = node.start_time - minTime;
       } else {
         node.relative_start_time = relativeMinTime;
       }
       if (node.end_time !== -1) {
-        // node.relative_end_time = ((node.end_time - minTime) / nsToS).toFixed(3);
         node.relative_end_time = node.end_time - minTime;
       } else {
-        // node.relative_end_time = (relativeMaxTime / nsToS).toFixed(3);
         node.relative_end_time = relativeMaxTime;
       }
       node.info += `\nlifetime:(${node.relative_start_time},${node.relative_end_time})`;
@@ -176,7 +171,7 @@ class Graph {
   getActiveNodesAtTime(currentTime) {
     const activeNodes = new Set();
     for (const [nodeId, node] of this.nodes) {
-      if (node.isLeaf && currentTime >= node.relative_start_time && currentTime <= node.relative_end_time) {
+      if (node.is_leaf && currentTime >= node.relative_start_time && currentTime <= node.relative_end_time) {
         activeNodes.add(nodeId);
       }
     }
@@ -195,17 +190,17 @@ class Graph {
         // 构建包含时间信息的标签
         let timeInfo = '';
         if (node.relativeStart !== undefined && node.relativeEnd !== undefined) {
-          timeInfo = `\\n[${node.relativeStart.toFixed(1)}-${node.relativeEnd.toFixed(1)}ms]`;
+          timeInfo = `\\n[${node.relativeStart}-${node.relativeEnd}]`;
         }
 
         const isHighlighted = highlightNodes.includes(node_id);
         const colorAttr = isHighlighted ? 'color=green, style=filled, fillcolor=lightgreen' : '';
 
-        if (node.isLeaf) {
-          const shape = node.isTensor ? "ellipse" : "box";
+        if (node.is_leaf) {
+          const shape = node.is_tensor ? "ellipse" : "box";
           const tooltip = `tooltip="${escapeDotLabel(node.info || node.label)}"`;
           sub.push(`${"    ".repeat(depth)}"${node_id}" [label="${escapeDotLabel(node.label + timeInfo)}", shape=${shape}, ${tooltip}, ${colorAttr}];`);
-          node.nextNodes.forEach(id => { 
+          node.next_nodes.forEach(id => { 
               edges_dot_lines.push(`${"    "}"${node_id}" -> "${id}";`) 
           });
         } else {
@@ -243,7 +238,7 @@ class Graph {
   _get_out_tensors_of_collapse_node(root_id) {
     const result=[];
     const in_root=(node_id)=>{while(node_id!=null){if(node_id===root_id)return true;node_id=this.nodes.get(node_id)?.parent??null;}return false;}
-    const dfs=(nid)=>{const node=this.nodes.get(nid);if(!node)return;if(node.isLeaf){if(node.isTensor && node.nextNodes.some(n=>!in_root(n)))result.push(nid);}else{node.children.forEach(c=>dfs(c));}};
+    const dfs=(nid)=>{const node=this.nodes.get(nid);if(!node)return;if(node.is_leaf){if(node.is_tensor && node.next_nodes.some(n=>!in_root(n)))result.push(nid);}else{node.children.forEach(c=>dfs(c));}};
     dfs(root_id);return result;
   }
   generate_new_graph() {
@@ -251,8 +246,8 @@ class Graph {
     const roots = [...this.nodes.values()].filter(n => n.parent===null).map(n=>n.id);
     const dfs_build = (node_id) => {
       const node=this.nodes.get(node_id);if(!node)return[];
-      if(node.isLeaf){new_graph.nodes.set(node_id, deepCopyNode(node)); return [];}
-      if(node.isCollapse){const c=deepCopyNode(node);c.isLeaf=true;c.children=[];c.nextNodes=this._get_out_tensors_of_collapse_node(node_id);new_graph.nodes.set(node_id,c);return c.nextNodes||[];}
+      if(node.is_leaf){new_graph.nodes.set(node_id, deepCopyNode(node)); return [];}
+      if(node.isCollapse){const c=deepCopyNode(node);c.is_leaf=true;c.children=[];c.next_nodes=this._get_out_tensors_of_collapse_node(node_id);new_graph.nodes.set(node_id,c);return c.next_nodes||[];}
       new_graph.nodes.set(node_id, deepCopyNode(node)); let extra=[]; node.children.forEach(child=>{extra=extra.concat(dfs_build(child))});
       extra.forEach(cid=>{const o=this.nodes.get(cid);if(o){const copy=deepCopyNode(o);copy.parent=node_id;new_graph.nodes.set(cid,copy)}})
       const ngNode=new_graph.nodes.get(node_id); if(ngNode){ngNode.children=Array.from(new Set([...(ngNode.children||[]),...extra]))}
@@ -261,7 +256,7 @@ class Graph {
     let extra=[]; roots.forEach(r=>{extra=extra.concat(dfs_build(r))});
     extra.forEach(cid=>{const o=this.nodes.get(cid);if(o){const copy=deepCopyNode(o);copy.parent=null;new_graph.nodes.set(cid,copy)}})
     const find_ancestor=(nid)=>{while(nid!=null&&!new_graph.nodes.has(nid)){nid=this.nodes.get(nid)?.parent??null;}return nid;}
-    const dfs_edges=(nid)=>{const node=new_graph.nodes.get(nid);if(!node)return;const updated=new Set([...node.nextNodes].map(n=>find_ancestor(n)).filter(x=>x!=null));node.nextNodes=Array.from(updated);(node.children||[]).forEach(c=>dfs_edges(c));}
+    const dfs_edges=(nid)=>{const node=new_graph.nodes.get(nid);if(!node)return;const updated=new Set([...node.next_nodes].map(n=>find_ancestor(n)).filter(x=>x!=null));node.next_nodes=Array.from(updated);(node.children||[]).forEach(c=>dfs_edges(c));}
     roots.forEach(r=>{if(new_graph.nodes.has(r))dfs_edges(r);});
     return new_graph;
   }

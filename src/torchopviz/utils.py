@@ -2,7 +2,7 @@ import json
 import os
 
 from .log import logger
-
+from .memory_profile import memory_profile_monkey_patch
 
 def load_data(file:str):
     logger.info(f"load json file: {os.path.abspath(file)}\n")
@@ -16,3 +16,8 @@ def load_data(file:str):
         raise ValueError(f"json decode error: {file}\ndetail: {e}")
     except Exception as e:
         raise RuntimeError(f"read file error: {file}\n{e}")
+
+
+def init(save_dir: str, save_backward: bool = False):
+    dir = os.path.abspath(save_dir)
+    memory_profile_monkey_patch(dir, save_backward)
