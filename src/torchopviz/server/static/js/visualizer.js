@@ -3,6 +3,7 @@ let maxTime = -1;
 let minTime = -1;
 let relativeMaxTime = -1;
 let relativeMinTime = -1;
+let sizeThreshold = 0;
 
 // *******************************************************************************************
 // node
@@ -30,6 +31,12 @@ class Node {
       this.info = "";
     }
 
+    // 隐藏tensor：屏蔽小tensor
+    this.is_hidden = false;
+    if (this.is_tensor && node_json?.info && node_json.info?.size && node_json.info.size<sizeThreshold) {
+      this.is_hidden = true;
+    }
+
     // 相对时间（会在 Graph 初始化时计算）
     this.relative_start_time = 0;
     this.relative_end_time = 0;
@@ -42,6 +49,11 @@ class Node {
 class Graph {
   constructor() {
     this.nodes = new Map();
+    this.roots = [];
+  }
+
+  setRoots() {
+    this.roots = [...this.nodes.values()].filter(n => n.parent===null).map(n=>n.id);
   }
 
   isLegalGraph() {
@@ -122,6 +134,54 @@ class Graph {
       }
     }
     return count === this.nodes.size;
+  }
+
+  hiddenTensor() {
+    const originRoots = [...this.nodes.values()].filter(n => n.parent===null).map(n=>n.id);
+    // 重建next_nodes关系
+    const dfs=(id)=>{
+      const node=this.nodes.get(id);
+      if(!node || node.is_tensor) return;
+      
+      const updated = new Set();
+      node.next_nodes.forEach(nid=>{
+        const targetNode = this.nodes.get(nid);
+        if (targetNode.is_hidden) {
+          // 是隐藏节点：将其 next_nodes 加入 updated（过滤 null/undefined）
+          targetNode.next_nodes.forEach(next=>{
+            updated.add(next);
+          });
+        } else {
+          updated.add(nid);
+        }
+      });
+      node.next_nodes=Array.from(updated);
+      (node.children||[]).forEach(c=>dfs(c));
+    }
+    originRoots.forEach(r=>{dfs(r);});
+
+    // 删除已屏蔽tensor
+    const dfs_delete=(id)=>{
+      const node=this.nodes.get(id);
+      if(!node) return false;
+      
+      if (node.is_tensor && node.is_hidden) {
+        this.nodes.delete(id);
+        return false;
+      }
+
+      // 递归处理 children，并过滤掉返回 false 的子节点
+      const validChildren = [];
+      node.children.forEach(childId=>{
+        const keep = dfs_delete(childId);
+        if (keep) {
+          validChildren.push(childId);
+        }
+      });
+      node.children = validChildren;
+      return true;
+    }
+    originRoots.forEach(r=>{dfs_delete(r);});
   }
 
   setRelativeTime() {
@@ -235,29 +295,114 @@ class Graph {
     ];
     return [...root_dot_lines.slice(0,-1),...node_dot_lines,...edges_dot_lines,...root_dot_lines.slice(-1)].join("\n");
   }
-  _get_out_tensors_of_collapse_node(root_id) {
-    const result=[];
-    const in_root=(node_id)=>{while(node_id!=null){if(node_id===root_id)return true;node_id=this.nodes.get(node_id)?.parent??null;}return false;}
-    const dfs=(nid)=>{const node=this.nodes.get(nid);if(!node)return;if(node.is_leaf){if(node.is_tensor && node.next_nodes.some(n=>!in_root(n)))result.push(nid);}else{node.children.forEach(c=>dfs(c));}};
-    dfs(root_id);return result;
+
+  _get_outputs_of_collapse_node(root_id) {
+    const output_tensors=[];
+    const output_ops=[];
+    const in_root=(node_id)=>{
+      while(node_id!=null){
+        if(node_id===root_id){
+          return true;
+        }
+        node_id=this.nodes.get(node_id)?.parent??null;
+      }
+      return false;
+    }
+    const dfs=(nid)=>{
+      const node=this.nodes.get(nid);
+      if(!node)return;
+      if(node.is_leaf){
+        // TODO: 这里some表示有一个节点不在本子树内就把tensor分出去，会造成单节点成环，与DAG假设不符
+        if(node.is_tensor && node.next_nodes.some(n=>!in_root(n))){
+          output_tensors.push(nid);
+          return;
+        } else {
+          node.next_nodes.forEach(id=>{
+            if(!in_root(id)){
+              output_ops.push(id);
+            }
+          });
+          return;
+        }
+      }else{
+        node.children.forEach(c=>dfs(c));
+      }
+    };
+    dfs(root_id);
+    return [output_tensors, output_ops];
   }
+
   generate_new_graph() {
     const new_graph = new Graph();
-    const roots = [...this.nodes.values()].filter(n => n.parent===null).map(n=>n.id);
+    const roots = [...this.roots];
     const dfs_build = (node_id) => {
-      const node=this.nodes.get(node_id);if(!node)return[];
-      if(node.is_leaf){new_graph.nodes.set(node_id, deepCopyNode(node)); return [];}
-      if(node.isCollapse){const c=deepCopyNode(node);c.is_leaf=true;c.children=[];c.next_nodes=this._get_out_tensors_of_collapse_node(node_id);new_graph.nodes.set(node_id,c);return c.next_nodes||[];}
-      new_graph.nodes.set(node_id, deepCopyNode(node)); let extra=[]; node.children.forEach(child=>{extra=extra.concat(dfs_build(child))});
-      extra.forEach(cid=>{const o=this.nodes.get(cid);if(o){const copy=deepCopyNode(o);copy.parent=node_id;new_graph.nodes.set(cid,copy)}})
-      const ngNode=new_graph.nodes.get(node_id); if(ngNode){ngNode.children=Array.from(new Set([...(ngNode.children||[]),...extra]))}
+      const node=this.nodes.get(node_id);
+      if(!node)return[];
+      if(node.is_leaf){
+        new_graph.nodes.set(node_id, deepCopyNode(node));
+        return [];
+      }
+      if(node.isCollapse){
+        const c=deepCopyNode(node);
+        c.is_leaf=true;
+        c.children=[];
+        const [output_tensors, output_ops] = this._get_outputs_of_collapse_node(node_id);
+        c.next_nodes=[...output_tensors, ...output_ops];
+        new_graph.nodes.set(node_id,c);
+        return output_tensors||[];
+      }
+      new_graph.nodes.set(node_id, deepCopyNode(node));
+      let extra=[];
+      node.children.forEach(child=>{extra=extra.concat(dfs_build(child))});
+
+      extra.forEach(cid=>{
+        const o=this.nodes.get(cid);
+        if(o){
+          const copy=deepCopyNode(o);
+          copy.parent=node_id;
+          new_graph.nodes.set(cid,copy);
+        }
+      })
+
+      const ngNode=new_graph.nodes.get(node_id);
+      if(ngNode){
+        ngNode.children=Array.from(new Set([...(ngNode.children||[]),...extra]));
+      }
       return [];
     };
-    let extra=[]; roots.forEach(r=>{extra=extra.concat(dfs_build(r))});
-    extra.forEach(cid=>{const o=this.nodes.get(cid);if(o){const copy=deepCopyNode(o);copy.parent=null;new_graph.nodes.set(cid,copy)}})
-    const find_ancestor=(nid)=>{while(nid!=null&&!new_graph.nodes.has(nid)){nid=this.nodes.get(nid)?.parent??null;}return nid;}
-    const dfs_edges=(nid)=>{const node=new_graph.nodes.get(nid);if(!node)return;const updated=new Set([...node.next_nodes].map(n=>find_ancestor(n)).filter(x=>x!=null));node.next_nodes=Array.from(updated);(node.children||[]).forEach(c=>dfs_edges(c));}
-    roots.forEach(r=>{if(new_graph.nodes.has(r))dfs_edges(r);});
+
+    let extra=[];
+    roots.forEach(r=>{
+      extra=extra.concat(dfs_build(r));
+    });
+
+    extra.forEach(cid=>{
+      const o=this.nodes.get(cid);
+      if(o){
+        const copy=deepCopyNode(o);
+        copy.parent=null;
+        new_graph.nodes.set(cid,copy);
+        roots.push(cid);
+      }
+    })
+    
+    const find_ancestor=(nid)=>{
+      while(nid!=null&&!new_graph.nodes.has(nid)){
+        nid=this.nodes.get(nid)?.parent??null;
+      }
+      return nid;
+    }
+
+    const dfs_edges=(nid)=>{
+      const node=new_graph.nodes.get(nid);
+      if(!node) return;
+      const updated=new Set([...node.next_nodes].map(n=>find_ancestor(n)).filter(x=>x!=null));
+      node.next_nodes=Array.from(updated);
+      (node.children||[]).forEach(c=>dfs_edges(c));
+    }
+    roots.forEach(r=>{
+      if(new_graph.nodes.has(r))dfs_edges(r);
+    });
     return new_graph;
   }
 }
@@ -577,6 +722,12 @@ async function loadFromNodesJson(nodes_json) {
     return;
   }
 
+  // 隐藏小tensor
+  originGraph.hiddenTensor();
+
+  // 初始化根节点
+  originGraph.setRoots();
+
   // 初始化时间条管理器
   if (!timelineManager) {
     timelineManager = new TimelineManager();
@@ -588,6 +739,13 @@ async function loadFromNodesJson(nodes_json) {
 
 window.addEventListener("DOMContentLoaded", async () => {
   try {
+    const config_res = await fetch("/config");
+    if (!config_res.ok) {
+      throw new Error("failed to load config");
+    }
+    const config = await config_res.json();
+    sizeThreshold = config.size_threshold;
+
     const res = await fetch("/data");
     if (!res.ok) {
       throw new Error("failed to load data");

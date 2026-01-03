@@ -5,6 +5,11 @@ from .log import logger
 from .memory_profile import memory_profile_monkey_patch
 
 def load_data(file:str):
+    """
+    Load json file
+    
+    :file: file path
+    """
     logger.info(f"load json file: {os.path.abspath(file)}\n")
     try:
         with open(file, "r", encoding="utf-8") as f:
@@ -19,5 +24,11 @@ def load_data(file:str):
 
 
 def init(save_dir: str, save_backward: bool = False):
+    """
+    Initialize torchopviz
+
+    :save_dir: the directory to save json data
+    :save_backward: visualize backward process
+    """
     dir = os.path.abspath(save_dir)
     memory_profile_monkey_patch(dir, save_backward)

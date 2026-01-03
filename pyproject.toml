@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torchopviz"
-version = "0.1.1"
+version = "0.1.3"
 description = "A small package to create visualizations of PyTorch operation execution"
 readme = "README.md"
 license = {text = "MIT"}

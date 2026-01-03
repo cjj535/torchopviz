@@ -42,14 +42,14 @@ def generate_data(model, input, label):
 
 # Initialize model
 model = nn.Sequential()
-model.add_module('W0', nn.Linear(8, 16, bias=False))
+model.add_module('W0', nn.Linear(1024, 2048, bias=False))
 model.add_module('tanh', nn.Tanh())
-model.add_module('W1', nn.Linear(16, 2, bias=False))
+model.add_module('W1', nn.Linear(2048, 10, bias=False))
 model = model.to()
 
 # Initialize data
-data = torch.randn(1,8)
-label = torch.randn(1,2)
+data = torch.randn(1024, 1024)
+label = torch.randn(1024, 10)
 
 # Init torchopviz
 init(save_dir=".", save_backward=True)
@@ -59,7 +59,7 @@ generate_data(model, data, label)
 
 # Launch server
 json_data = load_data("./complex_graph.json")
-launch_visualizer(json_data)
+launch_visualizer(json_data, port=5000, threshold=1.0)
 
 try:
     while True:

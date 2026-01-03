@@ -14,8 +14,14 @@ def get_resource_path(package, resource_dir):
     return str(path)
 
 
-def launch_visualizer(data, port=5000):
-    base_dir = os.path.abspath(os.path.dirname(__file__))
+def launch_visualizer(data, port: int = 5000, threshold: float = 0.0):
+    """
+    Launch visualizer to visualize graph
+    
+    :data: json data
+    :port: port number
+    :threshold: the tensors whose memory size is below [threshold] MB will be discard.
+    """
     app = Flask(
         __name__,
         template_folder=get_resource_path(package_name, "server/templates"),
@@ -25,6 +31,12 @@ def launch_visualizer(data, port=5000):
     @app.route("/data")
     def get_data():
         return data
+    
+    @app.route("/config")
+    def get_config():
+        return {
+            "size_threshold": int(threshold*1024*1024),
+        }
 
     @app.route('/')
     def index():
