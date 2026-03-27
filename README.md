@@ -38,6 +38,7 @@ complex_graph.json is a list of tensors, torch operations and modules. Each elem
     info                lifetime, and metadata for tensors
 You can generate your json file which can be displayed by "torchopviz".
 """
+
 from torchopviz import offline_viz
 offline_viz(file="./complex_graph.json")
 ```
@@ -60,6 +61,5 @@ online_viz(model, data, save_dir="./sample_data")
 
 ## TODO
 
-1.Display distributed computation
-
-2.Combine memory usage info
+- [ ] Display distributed computation
+- [ ] Combine memory usage info
